@@ -135,6 +135,11 @@ async function getAIResponse(prompt: string): Promise<Array<{
   };
 
   try {
+    console.log('=== OpenAI Request ===');
+    console.log('Model:', OPENAI_API_MODEL);
+    console.log('Config:', JSON.stringify(queryConfig, null, 2));
+    console.log('Prompt:', prompt);
+    
     const response = await openai.beta.chat.completions.parse({
       ...queryConfig,
       messages: [
@@ -146,9 +151,27 @@ async function getAIResponse(prompt: string): Promise<Array<{
       response_format: zodResponseFormat(ReviewResponse, "reviews")
     });
 
-    return response.choices[0].message?.parsed?.reviews || null;
+    console.log('\n=== OpenAI Response ===');
+    console.log('Raw response:', JSON.stringify(response, null, 2));
+    console.log('First choice:', response.choices[0]);
+    console.log('Message:', response.choices[0].message);
+    console.log('Parsed reviews:', response.choices[0].message?.parsed?.reviews);
+
+    const reviews = response.choices[0].message?.parsed?.reviews || null;
+    console.log('\n=== Final Reviews ===');
+    console.log(JSON.stringify(reviews, null, 2));
+    
+    return reviews;
   } catch (error) {
-    console.error("Error:", error);
+    console.error('\n=== OpenAI Error ===');
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
+    if (error.response) {
+      console.error('API Response:', JSON.stringify(error.response, null, 2));
+    }
+    if (error.stack) {
+      console.error('Stack trace:', error.stack);
+    }
     return null;
   }
 }
@@ -189,64 +212,98 @@ async function createReviewComment(
 }
 
 async function main() {
-  const prDetails = await getPRDetails();
-  let diff: string | null;
-  const eventData = JSON.parse(
-    readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
-  );
+  try {
+    console.log('\n=== Starting PR Review ===');
+    const prDetails = await getPRDetails();
+    console.log('PR Details:', JSON.stringify(prDetails, null, 2));
 
-  if (eventData.action === "opened") {
-    diff = await getDiff(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number
+    let diff: string | null;
+    const eventData = JSON.parse(
+      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
     );
-  } else if (eventData.action === "synchronize") {
-    const newBaseSha = eventData.before;
-    const newHeadSha = eventData.after;
+    console.log('Event Data:', JSON.stringify(eventData, null, 2));
 
-    const response = await octokit.repos.compareCommits({
-      headers: {
-        accept: "application/vnd.github.v3.diff",
-      },
-      owner: prDetails.owner,
-      repo: prDetails.repo,
-      base: newBaseSha,
-      head: newHeadSha,
+    if (eventData.action === "opened") {
+      console.log('Processing opened PR');
+      diff = await getDiff(
+        prDetails.owner,
+        prDetails.repo,
+        prDetails.pull_number
+      );
+    } else if (eventData.action === "synchronize") {
+      console.log('Processing synchronized PR');
+      const newBaseSha = eventData.before;
+      const newHeadSha = eventData.after;
+      console.log('Base SHA:', newBaseSha);
+      console.log('Head SHA:', newHeadSha);
+
+      const response = await octokit.repos.compareCommits({
+        headers: {
+          accept: "application/vnd.github.v3.diff",
+        },
+        owner: prDetails.owner,
+        repo: prDetails.repo,
+        base: newBaseSha,
+        head: newHeadSha,
+      });
+
+      diff = String(response.data);
+    } else {
+      console.log("Unsupported event:", process.env.GITHUB_EVENT_NAME);
+      return;
+    }
+
+    if (!diff) {
+      console.log("No diff found");
+      return;
+    }
+
+    console.log('\n=== Processing Diff ===');
+    console.log('Raw diff:', diff);
+    
+    const parsedDiff = parseDiff(diff);
+    console.log('Parsed diff:', JSON.stringify(parsedDiff, null, 2));
+
+    const excludePatterns = core
+      .getInput("exclude")
+      .split(",")
+      .map((s) => s.trim());
+    console.log('Exclude patterns:', excludePatterns);
+
+    const filteredDiff = parsedDiff.filter((file) => {
+      const excluded = !excludePatterns.some((pattern) =>
+        minimatch(file.to ?? "", pattern)
+      );
+      console.log(`File ${file.to}: ${excluded ? 'included' : 'excluded'}`);
+      return excluded;
     });
 
-    diff = String(response.data);
-  } else {
-    console.log("Unsupported event:", process.env.GITHUB_EVENT_NAME);
-    return;
-  }
+    console.log('\n=== Analyzing Code ===');
+    const comments = await analyzeCode(filteredDiff, prDetails);
+    console.log('Generated comments:', JSON.stringify(comments, null, 2));
 
-  if (!diff) {
-    console.log("No diff found");
-    return;
-  }
-
-  const parsedDiff = parseDiff(diff);
-
-  const excludePatterns = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-
-  const filteredDiff = parsedDiff.filter((file) => {
-    return !excludePatterns.some((pattern) =>
-      minimatch(file.to ?? "", pattern)
-    );
-  });
-
-  const comments = await analyzeCode(filteredDiff, prDetails);
-  if (comments.length > 0) {
-    await createReviewComment(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number,
-      comments
-    );
+    if (comments.length > 0) {
+      console.log('\n=== Creating Review ===');
+      await createReviewComment(
+        prDetails.owner,
+        prDetails.repo,
+        prDetails.pull_number,
+        comments
+      );
+      console.log('Review created successfully');
+    } else {
+      console.log('No comments to create');
+    }
+    
+    console.log('\n=== Review Complete ===');
+  } catch (error) {
+    console.error('\n=== Fatal Error ===');
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
+    if (error.stack) {
+      console.error('Stack trace:', error.stack);
+    }
+    process.exit(1);
   }
 }
 
