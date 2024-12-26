@@ -4,6 +4,8 @@ import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
 import parseDiff, { Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
+import { z } from "zod";
+import { zodResponseFormat } from "openai/helpers/zod";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
@@ -80,7 +82,6 @@ async function analyzeCode(
 
 function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
   return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
 - Do not give positive comments or compliments.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
 - Write the comment in GitHub Markdown format.
@@ -110,6 +111,16 @@ ${chunk.changes
 `;
 }
 
+// Define the review response schema
+const ReviewComment = z.object({
+  lineNumber: z.string(),
+  reviewComment: z.string()
+});
+
+const ReviewResponse = z.object({
+  reviews: z.array(ReviewComment)
+});
+
 async function getAIResponse(prompt: string): Promise<Array<{
   lineNumber: string;
   reviewComment: string;
@@ -126,20 +137,16 @@ async function getAIResponse(prompt: string): Promise<Array<{
   try {
     const response = await openai.chat.completions.create({
       ...queryConfig,
-      // return JSON if the model supports it:
-      ...(OPENAI_API_MODEL === "gpt-4o-mini"
-        ? { response_format: { type: "json_object" } }
-        : {}),
       messages: [
         {
           role: "system",
           content: prompt,
         },
       ],
+      response_format: zodResponseFormat(ReviewResponse, "reviews")
     });
 
-    const res = response.choices[0].message?.content?.trim() || "{}";
-    return JSON.parse(res).reviews;
+    return response.choices[0].message?.parsed?.reviews || null;
   } catch (error) {
     console.error("Error:", error);
     return null;
