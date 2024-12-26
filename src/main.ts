@@ -169,11 +169,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
     return reviews;
   } catch (error) {
     core.error('\n=== OpenAI Error ===');
-    core.error(`Error type: ${error.constructor.name}`);
-    core.error(`Error message: ${error.message}`);
-    if (error.response) {
-      core.error(`API Response: ${JSON.stringify(error.response, null, 2)}`);
-    }
+    core.error(`Error: ${error}`);
     return null;
   }
 }
@@ -299,13 +295,7 @@ async function main() {
     
     core.info('\n=== Review Complete ===');
   } catch (error) {
-    core.setFailed(`Error: ${error.message}`);
-    core.error('\n=== Fatal Error ===');
-    core.error(`Error type: ${error.constructor.name}`);
-    core.error(`Error message: ${error.message}`);
-    if (error.stack) {
-      core.error(`Stack trace: ${error.stack}`);
-    }
+    core.setFailed(`Error: ${error}`);
     process.exit(1);
   }
 }
