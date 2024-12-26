@@ -81,34 +81,35 @@ async function analyzeCode(
 }
 
 function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
-  return `Your task is to review pull requests. Instructions:
-- Do not give positive comments or compliments.
-- Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
-- Write the comment in GitHub Markdown format.
-- Use the given description only for the overall context and only comment the code.
-- IMPORTANT: NEVER suggest adding comments to the code.
+  return `You are a code reviewer. Your task is to analyze the code and provide feedback in a structured format.
 
-Review the following code diff in the file "${
-    file.to
-  }" and take the pull request title and description into account when writing the response.
-  
-Pull request title: ${prDetails.title}
-Pull request description:
+You MUST respond with a JSON object that matches this schema:
+{
+  "reviews": [
+    {
+      "lineNumber": "<line_number>",
+      "reviewComment": "<review_comment>"
+    }
+  ]
+}
 
----
-${prDetails.description}
----
+Rules:
+- Do not give positive comments or compliments
+- If there are no issues to improve, return {"reviews": []}
+- Write comments in GitHub Markdown format
+- Never suggest adding code comments
+- Focus on code quality, security, and best practices
 
-Git diff to review:
+File: ${file.to}
+PR Title: ${prDetails.title}
+Description: ${prDetails.description}
 
-\`\`\`diff
+Code to review:
 ${chunk.content}
 ${chunk.changes
   // @ts-expect-error - ln and ln2 exists where needed
   .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
-  .join("\n")}
-\`\`\`
-`;
+  .join("\n")}`;
 }
 
 // Define the review response schema
@@ -145,6 +146,10 @@ async function getAIResponse(prompt: string): Promise<Array<{
       messages: [
         {
           role: "system",
+          content: "You are a code reviewer that must respond with valid JSON matching the schema.",
+        },
+        {
+          role: "user",
           content: prompt,
         },
       ],
@@ -168,9 +173,6 @@ async function getAIResponse(prompt: string): Promise<Array<{
     core.error(`Error message: ${error.message}`);
     if (error.response) {
       core.error(`API Response: ${JSON.stringify(error.response, null, 2)}`);
-    }
-    if (error.stack) {
-      core.error(`Stack trace: ${error.stack}`);
     }
     return null;
   }
