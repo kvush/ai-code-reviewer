@@ -135,7 +135,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
   };
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await openai.beta.chat.completions.parse({
       ...queryConfig,
       messages: [
         {
