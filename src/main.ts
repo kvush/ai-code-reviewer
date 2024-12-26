@@ -135,10 +135,10 @@ async function getAIResponse(prompt: string): Promise<Array<{
   };
 
   try {
-    console.log('=== OpenAI Request ===');
-    console.log('Model:', OPENAI_API_MODEL);
-    console.log('Config:', JSON.stringify(queryConfig, null, 2));
-    console.log('Prompt:', prompt);
+    core.info('=== OpenAI Request ===');
+    core.info(`Model: ${OPENAI_API_MODEL}`);
+    core.debug(`Config: ${JSON.stringify(queryConfig, null, 2)}`);
+    core.debug(`Prompt: ${prompt}`);
     
     const response = await openai.beta.chat.completions.parse({
       ...queryConfig,
@@ -151,26 +151,26 @@ async function getAIResponse(prompt: string): Promise<Array<{
       response_format: zodResponseFormat(ReviewResponse, "reviews")
     });
 
-    console.log('\n=== OpenAI Response ===');
-    console.log('Raw response:', JSON.stringify(response, null, 2));
-    console.log('First choice:', response.choices[0]);
-    console.log('Message:', response.choices[0].message);
-    console.log('Parsed reviews:', response.choices[0].message?.parsed?.reviews);
+    core.debug('\n=== OpenAI Response ===');
+    core.debug(`Raw response: ${JSON.stringify(response, null, 2)}`);
+    core.debug(`First choice: ${JSON.stringify(response.choices[0])}`);
+    core.debug(`Message: ${JSON.stringify(response.choices[0].message)}`);
+    core.info(`Parsed reviews: ${JSON.stringify(response.choices[0].message?.parsed?.reviews, null, 2)}`);
 
     const reviews = response.choices[0].message?.parsed?.reviews || null;
-    console.log('\n=== Final Reviews ===');
-    console.log(JSON.stringify(reviews, null, 2));
+    core.info('\n=== Final Reviews ===');
+    core.info(JSON.stringify(reviews, null, 2));
     
     return reviews;
   } catch (error) {
-    console.error('\n=== OpenAI Error ===');
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
+    core.error('\n=== OpenAI Error ===');
+    core.error(`Error type: ${error.constructor.name}`);
+    core.error(`Error message: ${error.message}`);
     if (error.response) {
-      console.error('API Response:', JSON.stringify(error.response, null, 2));
+      core.error(`API Response: ${JSON.stringify(error.response, null, 2)}`);
     }
     if (error.stack) {
-      console.error('Stack trace:', error.stack);
+      core.error(`Stack trace: ${error.stack}`);
     }
     return null;
   }
@@ -213,29 +213,29 @@ async function createReviewComment(
 
 async function main() {
   try {
-    console.log('\n=== Starting PR Review ===');
+    core.info('\n=== Starting PR Review ===');
     const prDetails = await getPRDetails();
-    console.log('PR Details:', JSON.stringify(prDetails, null, 2));
+    core.info(`PR Details: ${JSON.stringify(prDetails, null, 2)}`);
 
     let diff: string | null;
     const eventData = JSON.parse(
       readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
     );
-    console.log('Event Data:', JSON.stringify(eventData, null, 2));
+    core.debug(`Event Data: ${JSON.stringify(eventData, null, 2)}`);
 
     if (eventData.action === "opened") {
-      console.log('Processing opened PR');
+      core.info('Processing opened PR');
       diff = await getDiff(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number
       );
     } else if (eventData.action === "synchronize") {
-      console.log('Processing synchronized PR');
+      core.info('Processing synchronized PR');
       const newBaseSha = eventData.before;
       const newHeadSha = eventData.after;
-      console.log('Base SHA:', newBaseSha);
-      console.log('Head SHA:', newHeadSha);
+      core.debug(`Base SHA: ${newBaseSha}`);
+      core.debug(`Head SHA: ${newHeadSha}`);
 
       const response = await octokit.repos.compareCommits({
         headers: {
@@ -249,59 +249,60 @@ async function main() {
 
       diff = String(response.data);
     } else {
-      console.log("Unsupported event:", process.env.GITHUB_EVENT_NAME);
+      core.warning(`Unsupported event: ${process.env.GITHUB_EVENT_NAME}`);
       return;
     }
 
     if (!diff) {
-      console.log("No diff found");
+      core.warning("No diff found");
       return;
     }
 
-    console.log('\n=== Processing Diff ===');
-    console.log('Raw diff:', diff);
+    core.debug('\n=== Processing Diff ===');
+    core.debug(`Raw diff: ${diff}`);
     
     const parsedDiff = parseDiff(diff);
-    console.log('Parsed diff:', JSON.stringify(parsedDiff, null, 2));
+    core.debug(`Parsed diff: ${JSON.stringify(parsedDiff, null, 2)}`);
 
     const excludePatterns = core
       .getInput("exclude")
       .split(",")
       .map((s) => s.trim());
-    console.log('Exclude patterns:', excludePatterns);
+    core.info(`Exclude patterns: ${excludePatterns.join(', ')}`);
 
     const filteredDiff = parsedDiff.filter((file) => {
       const excluded = !excludePatterns.some((pattern) =>
         minimatch(file.to ?? "", pattern)
       );
-      console.log(`File ${file.to}: ${excluded ? 'included' : 'excluded'}`);
+      core.debug(`File ${file.to}: ${excluded ? 'included' : 'excluded'}`);
       return excluded;
     });
 
-    console.log('\n=== Analyzing Code ===');
+    core.info('\n=== Analyzing Code ===');
     const comments = await analyzeCode(filteredDiff, prDetails);
-    console.log('Generated comments:', JSON.stringify(comments, null, 2));
+    core.info(`Generated comments: ${JSON.stringify(comments, null, 2)}`);
 
     if (comments.length > 0) {
-      console.log('\n=== Creating Review ===');
+      core.info('\n=== Creating Review ===');
       await createReviewComment(
         prDetails.owner,
         prDetails.repo,
         prDetails.pull_number,
         comments
       );
-      console.log('Review created successfully');
+      core.info('Review created successfully');
     } else {
-      console.log('No comments to create');
+      core.info('No comments to create');
     }
     
-    console.log('\n=== Review Complete ===');
+    core.info('\n=== Review Complete ===');
   } catch (error) {
-    console.error('\n=== Fatal Error ===');
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
+    core.setFailed(`Error: ${error.message}`);
+    core.error('\n=== Fatal Error ===');
+    core.error(`Error type: ${error.constructor.name}`);
+    core.error(`Error message: ${error.message}`);
     if (error.stack) {
-      console.error('Stack trace:', error.stack);
+      core.error(`Stack trace: ${error.stack}`);
     }
     process.exit(1);
   }
